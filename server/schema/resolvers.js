@@ -4,15 +4,86 @@ const Brand = require('../models/Brand');
 
 const resolvers = {
     Query: {
-        // Get all products with category and brand populated
-        products: async () => {
+        // Get all products with pagination and search
+        products: async (_, { page = 1, limit = 10, search = '' }) => {
             try {
-                const la_products = await ProductModel.find();
-                return la_products;
+                // Build search filter
+                const lo_matchStage = {};
+                if (search && search.trim() !== '') {
+                    const ls_escapedSearch = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    lo_matchStage.$or = [
+                        { name: { $regex: ls_escapedSearch, $options: 'i' } },
+                        { description: { $regex: ls_escapedSearch, $options: 'i' } }
+                    ];
+                }
+
+                const li_skip = (page - 1) * limit;
+
+                /* ---------------- COUNT PIPELINE ---------------- */
+                const la_countPipeline = [
+                    ...(Object.keys(lo_matchStage).length ? [{ $match: lo_matchStage }] : []),
+                    { $count: 'total' }
+                ];
+
+                /* ---------------- DATA PIPELINE ---------------- */
+                const la_dataPipeline = [
+                    ...(Object.keys(lo_matchStage).length ? [{ $match: lo_matchStage }] : []),
+                    { $sort: { createdAt: -1 } },
+                    { $skip: li_skip },
+                    { $limit: limit },
+                    {
+                        $addFields: {
+                            id: '$_id'
+                        }
+                    },
+                    {
+                        $lookup: {
+                            from: 'categories',
+                            localField: 'categoryId',
+                            foreignField: '_id',
+                            as: 'category'
+                        }
+                    },
+                    {
+                        $lookup: {
+                            from: 'brands',
+                            localField: 'brandId',
+                            foreignField: '_id',
+                            as: 'brand'
+                        }
+                    },
+                    { $unwind: { path: '$category', preserveNullAndEmptyArrays: true } },
+                    { $unwind: { path: '$brand', preserveNullAndEmptyArrays: true } }
+                ];
+
+
+                /* ---------------- EXECUTE IN PARALLEL ---------------- */
+                const [la_countResult, la_products] = await Promise.all([
+                    ProductModel.aggregate(la_countPipeline),
+                    ProductModel.aggregate(la_dataPipeline)
+                ]);
+
+                const li_total = la_countResult[0]?.total || 0;
+                const li_totalPages = Math.ceil(li_total / limit);
+
+                
+                const la_productsWithId = la_products.map(p => ({
+                    ...p,
+                    id: p._id
+                }));
+                
+                return {
+                    products: JSON.parse(JSON.stringify(la_productsWithId)),
+                    total: li_total,
+                    page,
+                    limit,
+                    totalPages: li_totalPages
+                };
             } catch (lo_error) {
                 throw new Error(`Error fetching products: ${lo_error.message}`);
             }
         },
+
 
         // Get product details by ID with category and brand lookup
         productDetails: async (_, { id: ls_id }) => {

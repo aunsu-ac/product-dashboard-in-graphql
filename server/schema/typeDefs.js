@@ -46,9 +46,33 @@ const typeDefs = gql`
     value: String!
   }
 
-  type Query {
-    # Get all products
+  type ProductsResult {
     products: [Product!]!
+    total: Int!
+    page: Int!
+    limit: Int!
+    totalPages: Int!
+  }
+
+  type CategoriesResult {
+    categories: [Category!]!
+    total: Int!
+    page: Int!
+    limit: Int!
+    totalPages: Int!
+  }
+
+  type BrandsResult {
+    brands: [Brand!]!
+    total: Int!
+    page: Int!
+    limit: Int!
+    totalPages: Int!
+  }
+
+  type Query {
+    # Get all products with pagination and search
+    products(page: Int, limit: Int, search: String): ProductsResult!
     
     # Get product details by ID (with category and brand lookup)
     productDetails(id: ID!): Product

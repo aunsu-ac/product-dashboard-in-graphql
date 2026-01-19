@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
     Table,
     Button,
@@ -40,12 +40,40 @@ const ProductCRUD = () => {
     const [lo_selectedProduct, setLo_selectedProduct] = useState(null);
     const [ls_editingId, setLs_editingId] = useState(null);
     const [ls_searchText, setLs_searchText] = useState('');
+    const [ls_searchInput, setLs_searchInput] = useState('');
     const [ls_imageUrl, setLs_imageUrl] = useState('');
     const [la_specifications, setLa_specifications] = useState([{ key: '', value: '' }]);
     const [lo_form] = Form.useForm();
+    const [li_currentPage, setLi_currentPage] = useState(1);
+    const [li_pageSize, setLi_pageSize] = useState(10);
+    const [li_total, setLi_total] = useState(0);
+    const [li_totalPages, setLi_totalPages] = useState(0);
+    const lo_debounceTimer = useRef(null);
+
+    // Debounced search handler
+    const handleSearchChange = useCallback((ls_value) => {
+        setLs_searchInput(ls_value);
+        
+        if (lo_debounceTimer.current) {
+            clearTimeout(lo_debounceTimer.current);
+        }
+        
+        lo_debounceTimer.current = setTimeout(() => {
+            setLs_searchText(ls_value);
+            setLi_currentPage(1);
+        }, 500);
+    }, []);
 
     useEffect(() => {
         fetchProducts();
+    }, [li_currentPage, li_pageSize, ls_searchText]);
+
+    useEffect(() => {
+        return () => {
+            if (lo_debounceTimer.current) {
+                clearTimeout(lo_debounceTimer.current);
+            }
+        };
     }, []);
 
     const fetchProducts = async () => {
@@ -53,34 +81,42 @@ const ProductCRUD = () => {
         try {
             const ls_query = `
         query {
-          products {
-            id
-            name
-            description
-            price
-            stock
-            imageUrl
-            specifications {
-              key
-              value
-            }
-            category {
+          products(page: ${li_currentPage}, limit: ${li_pageSize}, search: "${ls_searchText}") {
+            products {
               id
               name
-              slug
+              description
+              price
+              stock
+              imageUrl
+              specifications {
+                key
+                value
+              }
+              category {
+                id
+                name
+                slug
+              }
+              brand {
+                id
+                name
+                country
+              }
+              createdAt
+              updatedAt
             }
-            brand {
-              id
-              name
-              country
-            }
-            createdAt
-            updatedAt
+            total
+            page
+            limit
+            totalPages
           }
         }
       `;
             const lo_data = await graphqlRequest(ls_query);
-            setLa_products(lo_data.products);
+            setLa_products(lo_data.products.products);
+            setLi_total(lo_data.products.total);
+            setLi_totalPages(lo_data.products.totalPages);
         } catch (lo_error) {
             message.error('Failed to fetch products');
             console.error(lo_error);
@@ -263,6 +299,7 @@ const ProductCRUD = () => {
             lo_form.resetFields();
             setLs_imageUrl('');
             setLa_specifications([{ key: '', value: '' }]);
+            setLi_currentPage(1);
             fetchProducts();
         } catch (lo_error) {
             message.error('Operation failed');
@@ -279,7 +316,12 @@ const ProductCRUD = () => {
       `;
             await graphqlRequest(ls_mutation);
             message.success('Product deleted successfully');
-            fetchProducts();
+            // If deleting the last item on a page (not first page), go to previous page
+            if (la_products.length === 1 && li_currentPage > 1) {
+                setLi_currentPage(li_currentPage - 1);
+            } else {
+                fetchProducts();
+            }
         } catch (lo_error) {
             message.error('Failed to delete product');
             console.error(lo_error);
@@ -311,11 +353,6 @@ const ProductCRUD = () => {
             title: 'Name',
             dataIndex: 'name',
             key: 'name',
-            filteredValue: [ls_searchText],
-            onFilter: (ls_value, lo_record) =>
-                lo_record.name.toLowerCase().includes(ls_value.toLowerCase()) ||
-                lo_record.category?.name.toLowerCase().includes(ls_value.toLowerCase()) ||
-                lo_record.brand?.name.toLowerCase().includes(ls_value.toLowerCase()),
         },
         {
             title: 'Category',
@@ -382,10 +419,17 @@ const ProductCRUD = () => {
         <div style={{ padding: 24 }}>
             <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
                 <Input.Search
-                    placeholder="Search products, categories, or brands..."
+                    placeholder="Search products by name or description..."
                     allowClear
                     style={{ width: 400 }}
-                    onChange={(e) => setLs_searchText(e.target.value)}
+                    value={ls_searchInput}
+                    onSearch={(ls_value) => {
+                        setLs_searchText(ls_value);
+                        setLi_currentPage(1);
+                    }}
+                    onChange={(e) => {
+                        handleSearchChange(e.target.value);
+                    }}
                 />
                 <Button
                     type="primary"
@@ -402,8 +446,19 @@ const ProductCRUD = () => {
                 rowKey="id"
                 loading={lb_loading}
                 pagination={{
-                    pageSize: 10,
+                    current: li_currentPage,
+                    pageSize: li_pageSize,
+                    total: li_total,
                     showTotal: (li_total) => `Total ${li_total} products`,
+                    showSizeChanger: true,
+                    pageSizeOptions: ['10', '20', '50', '100'],
+                    onChange: (li_page, li_size) => {
+                        setLi_currentPage(li_page);
+                        if (li_size !== li_pageSize) {
+                            setLi_pageSize(li_size);
+                            setLi_currentPage(1);
+                        }
+                    },
                 }}
             />
 
